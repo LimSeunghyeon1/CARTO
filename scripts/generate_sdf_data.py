@@ -4,7 +4,6 @@ os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 import multiprocessing
 from concurrent import futures
-import pathlib
 import tqdm
 import functools
 import gc
@@ -14,7 +13,6 @@ import logging
 from typing import Dict, Any, Callable, List
 import itertools
 
-# import pyrender
 import trimesh
 import urdfpy
 import numpy as np
@@ -70,17 +68,17 @@ def get_datapoint(
     return datapoint
 
 
-def save_to_disk(path: pathlib.Path, datapoint: dataset.DataPoint):
+def save_to_disk(path, datapoint: dataset.DataPoint):
     buf = compress_datapoint(datapoint)
-    file_path = (
-        path / f"{datapoint.object_id}_{str(datapoint.joint_config_id)}.pickle.zstd"
+    file_path = os.path.join(
+        path, f"{datapoint.object_id}_{str(datapoint.joint_config_id)}.pickle.zstd"
     )
     with open(file_path, "wb") as fh:
         fh.write(buf)
     gc.collect()
 
 
-def save_to_disk_future(path: pathlib.Path, future_):
+def save_to_disk_future(path, future_):
     datapoint = future_.result()
     save_to_disk(path, datapoint)
 
@@ -95,7 +93,7 @@ def process_object_id(
     object_meta = PartNetMobilityV0DB.get_object_meta(object_id)
     object_path = PartNetMobilityV0DB.get_object(object_id)
 
-    urdf_object = urdfpy.URDF.load(str(object_path / "mobility.urdf"))
+    urdf_object = urdfpy.URDF.load(os.path.join(object_path, "mobility.urdf"))
 
     joints_of_interest: List[str] = []
     for joint_id, joint in object_meta["joints"].items():
@@ -105,7 +103,6 @@ def process_object_id(
             continue
         joints_of_interest.append(joint_id)
 
-    # assert len(joints_of_interest) == 1
     if len(joints_of_interest) > 1:
         print(f"Skipping object with {len(joints_of_interest)} joints of interest")
         return []
@@ -114,24 +111,20 @@ def process_object_id(
     for joint_steps_state in itertools.product(
         *[range(cfg.num_configs)] * len(joints_of_interest)
     ):
-        # print(f"{joint_steps_state = }")
         joint_config = {}
         for joint_id, joint_step in zip(joints_of_interest, joint_steps_state):
             limits = partnet_mobility.get_canonical_joint_limits(object_meta, joint_id)
             joint_range = limits[1] - limits[0]
-            # print(f"{configs_per_joint}, {joint_range}, {joint_step}")
             joint_config[joint_id] = limits[0] + (
                 (joint_range * joint_step / (cfg.num_configs - 1))
                 if cfg.num_configs > 1
                 else joint_range / 2
             )
 
-        # print(f"{joint_config = }")
         joint_configs_to_render.append(joint_config)
 
     canonical_transform = object_meta["canonical_transformation"]
 
-    # results = []
     if parallel_executor is not None:
         all_futures = []
         for joint_config in joint_configs_to_render:
@@ -146,8 +139,6 @@ def process_object_id(
             save_to_disk_ = functools.partial(save_to_disk_future, save_path)
             future.add_done_callback(save_to_disk_)
 
-            # This causes futures not to be deleted properly when done
-            # unless the full list is destroyed?
             all_futures.append(future)
         return all_futures
     else:
@@ -160,7 +151,6 @@ def process_object_id(
                 transform=canonical_transform,
             )
             save_to_disk(save_path, datapoint)
-            # results.append({"joint_config": joint_config, "points": points, "sdf": sdf})
         return []
 
 
@@ -180,34 +170,33 @@ def main(args: config.GenerationConfig):
         object_ids: List[str] = open(args.id_file, "r").read().splitlines()
         object_filter = partnet_mobility.get_instance_filter(object_ids)
 
+    print("object filter", object_filter)
     partnet_mobility_db.set_filter(object_filter)
     print(f"Length of filtered dataset: {len(partnet_mobility_db)}")
 
     suffix = f"_{args.suffix}" if args.suffix != "" else ""
     prefix = f"{args.prefix}_" if args.prefix != "" else ""
 
-    save_path: pathlib.Path = config.BASE_DIR / "generated_data"
+    save_path = os.path.join(config.BASE_DIR, "generated_data")
     if args.id_file:
-        args.id_file
-        save_path /= (
-            f"{prefix}{pathlib.Path(args.id_file).stem}_{args.num_configs}{suffix}"
+        save_path = os.path.join(
+            save_path,
+            f"{prefix}{os.path.splitext(os.path.basename(args.id_file))[0]}_{args.num_configs}{suffix}",
         )
     else:
-        save_path /= f"{prefix}{'_'.join(args.categories)}_{args.num_configs}{suffix}"
-    save_path.mkdir(exist_ok=True, parents=True)
+        save_path = os.path.join(
+            save_path, f"{prefix}{'_'.join(args.categories)}_{args.num_configs}{suffix}"
+        )
+    os.makedirs(save_path, exist_ok=True)
 
     def save_cfg():
-        with open(save_path / "config.yaml", "w") as file:
+        with open(os.path.join(save_path, "config.yaml"), "w") as file:
             file.write(tyro.to_yaml(args))
 
     save_cfg()
 
     mp_context = multiprocessing.get_context("forkserver")
-    # mp_context = multiprocessing.get_context("spawn")
 
-    # TODO Nick: Maybe replace this with a queue?
-    # for object_id in tqdm.tqdm(PartNetMobilityV0DB.index_list[:3]):
-    # for object_id in PartNetMobilityV0DB.index_list[55:]:
     for object_id in tqdm.tqdm(partnet_mobility_db.index_list):
         if args.parallel:
             divider = 1
@@ -227,30 +216,21 @@ def main(args: config.GenerationConfig):
                             parallel_executor=parallel_executor,
                         )
 
-                        # This seem not to free the memory correctly!
-                        # TODO Check with gc in thread
                         with tqdm.tqdm(total=len(all_futures), leave=False) as pbar:
                             for future in futures.as_completed(all_futures):
                                 pbar.update(1)
                                 datapoint: dataset.DataPoint = future.result()
-                                # This gets rescaling in unit-sphere
-                                # args.max_extent = float(
-                                #     max(np.max(np.linalg.norm(datapoint.full_pc, axis=-1)), args.max_extent)
-                                # )
-                                # This gets rescaling in unit-cube
                                 args.max_extent = float(
                                     max(
                                         np.max(np.abs(datapoint.full_pc)),
                                         args.max_extent,
                                     )
                                 )
-                                # As our objects are bounding box aligned, they should be roughly equal --> doesn't really matter
                                 save_cfg()
 
                         parallel_executor.shutdown(wait=True)
                         gc.collect()
                     except Exception as e:
-                        # We failed in generating
                         logging.error(traceback.format_exc())
                         print(f"Error processing {object_id}")
                         divider *= 2
@@ -258,13 +238,16 @@ def main(args: config.GenerationConfig):
                             retry = False
                             continue
                         print(
-                            f"As memory overflowd, Re-trying with less workers --> dividing (//) workers by {divider = }"
+                            f"As memory overflowed, Re-trying with less workers --> dividing (//) workers by {divider = }"
                         )
                         retry = True
-                        # Delete previously saved
-                        already_saved = save_path.glob(f"{object_id}_*")
+                        already_saved = [
+                            f
+                            for f in os.listdir(save_path)
+                            if f.startswith(f"{object_id}_")
+                        ]
                         for file_ in already_saved:
-                            file_.unlink()
+                            os.remove(os.path.join(save_path, file_))
         else:
             process_object_id(
                 object_id,

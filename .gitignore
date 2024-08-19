@@ -20,3 +20,4 @@ datasets/real/*
 datasets/synthetic/*
 *.tar.gz
 downloaded_archives/*
+pytorch3d/

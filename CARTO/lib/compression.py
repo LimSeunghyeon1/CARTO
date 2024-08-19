@@ -3,6 +3,7 @@ import zstandard
 import collections
 import io
 import tarfile
+import os
 
 
 def write_compressed_json(x, path):
@@ -36,8 +37,8 @@ def extract_compressed_tarfile(tarfile_path, dst_dir):
                     continue
                 data = tar.extractfile(member).read()
                 assert member.name[0] != "/"
-                member_path = dst_dir / member.path
-                parent_dir = member_path.parent
-                parent_dir.mkdir(parents=True, exist_ok=True)
+                member_path = os.path.join(dst_dir, member.name)
+                parent_dir = os.path.dirname(member_path)
+                os.makedirs(parent_dir, exist_ok=True)
                 with open(member_path, "wb") as f:
                     f.write(data)

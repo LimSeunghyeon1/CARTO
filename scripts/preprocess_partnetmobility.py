@@ -17,7 +17,7 @@ import urdfpy
 import zstandard as zstd
 from CARTO.lib.partnet_mobility import get_joint_dict
 from CARTO.lib.compression import write_compressed_json
-
+import os
 
 PARALLEL = True
 
@@ -43,10 +43,17 @@ canonical_transformations_instance = defaultdict(
 )
 
 
-def main(top_dir=pathlib.Path("datasets/partnet-mobility-v0/raw_dataset")):
+# def main(top_dir=pathlib.Path("datasets/partnet-mobility-v0/raw_dataset")):
+def main(top_dir=pathlib.Path("/data/models/CARTO/datasets/partnet-mobility-v0/raw_dataset")):
     model_dirs = (top_dir).glob("*")
 
-    (top_dir / ".." / "tarfiles").mkdir(exist_ok=True, parents=True)
+    target_dir = os.path.abspath(os.path.join(top_dir, "..", "tarfiles"))
+
+    if not os.access(os.path.dirname(target_dir), os.W_OK):
+        print(f"No write access to directory: {os.path.dirname(target_dir)}")
+    else:
+        os.makedirs(target_dir, exist_ok=True)
+        print(f"Directory created at: {target_dir}")
 
     full_index = []
     if PARALLEL:
@@ -67,7 +74,9 @@ def main(top_dir=pathlib.Path("datasets/partnet-mobility-v0/raw_dataset")):
 
     print("Writing index")
     index = sorted(index, key=lambda x: x["model_id"])
-    index_path = top_dir / ".." / "index.json.zst"
+    # index_path = top_dir / ".." / "index.json.zst"
+    index_path = os.path.abspath(os.path.join(top_dir, "..", "index.json.zst"))
+
     write_compressed_json(index, index_path)
 
 
@@ -83,14 +92,14 @@ def load_semantics(semantics_file):
 
 
 def process_model(model_dir: pathlib.Path):
-    with open(model_dir / "meta.json") as fh:
+    with open(os.path.join(model_dir , "meta.json")) as fh:
         meta = json.load(fh)
     assert "model_id" in meta
     model_id = meta["model_id"]
 
-    # Create tar-ball
     all_paths = model_dir.glob("**/*")
-    tar_path = model_dir / ".." / ".." / "tarfiles" / (model_id + ".tar.zst")
+    # tar_path = model_dir / ".." / ".." / "tarfiles" / (model_id + ".tar.zst")
+    tar_path = os.path.abspath(os.path.join(model_dir, "..", "..","tarfiles", (model_id + ".tar.zst")))
     cctx = zstd.ZstdCompressor()
     with open(tar_path, "wb") as raw_fh:
         with cctx.stream_writer(raw_fh) as zst_fh:
@@ -99,16 +108,17 @@ def process_model(model_dir: pathlib.Path):
                     rel_path = path.relative_to(model_dir)
                     tar.add(str(path), arcname=str(rel_path), recursive=False)
 
-    tar_bytes = tar_path.stat().st_size
+
+    tar_bytes = os.path.getsize(tar_path)
     meta["num_bytes"] = tar_bytes
 
-    with open(model_dir / "semantics.txt") as fh:
+    with open(os.path.join(model_dir , "semantics.txt")) as fh:
         joint_semantics = load_semantics(fh)
 
     # Try loading the URDF
     # This step is important as PartNetMobility might miss some .obj!
     try:
-        urdf = urdfpy.URDF.load(str(model_dir / "mobility.urdf"))
+        urdf = urdfpy.URDF.load(str(os.path.join(model_dir, "mobility.urdf")))
     except ValueError as e:
         logging.warning(f"urdfpy could not load model at {model_dir} with error\n{e}")
         return None, False

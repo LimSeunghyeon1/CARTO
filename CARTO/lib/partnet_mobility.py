@@ -11,6 +11,7 @@ import urdfpy
 from CARTO.lib import transform
 import copy
 from CARTO.lib.compression import read_compressed_json, extract_compressed_tarfile
+import os
 
 # Assumes structure like this
 # CARTO/
@@ -20,22 +21,22 @@ from CARTO.lib.compression import read_compressed_json, extract_compressed_tarfi
 #     datasets/
 #         partnet-mobility-v0/
 
-CARTO_PARENT = pathlib.Path(__file__).parent.resolve() / ".." / ".."
+
+CARTO_PARENT = os.path.join(os.path.dirname(__file__), "..", "..")
 
 
 class PartNetMobilityV0:
     def __init__(
         self: "PartNetMobilityV0",
-        root_path: Union[str, pathlib.Path] = CARTO_PARENT
-        / "datasets/partnet-mobility-v0",
+        root_path: Union[str, pathlib.Path] = os.path.join(CARTO_PARENT, "datasets", "partnet-mobility-v0"),
     ):
         self.root_path = root_path
         try:
             self.index: List[Dict[Any, Any]] = read_compressed_json(
-                self.root_path / "index.json.zst"
+                os.path.join(self.root_path, "index.json.zst")
             )
         except:
-            print(f"WARNING: {self.root_path / 'index.json.zst'} was not found, empty PartNetMobility Database!")
+            print(f"WARNING: {os.path.join(self.root_path, 'index.json.zst')} was not found, empty PartNetMobility Database!")
             self.index = []
         self.id_index: Dict[str, Any] = {meta["model_id"]: meta for meta in self.index}
         self._cache: Dict[Any, Any] = {}
@@ -78,10 +79,10 @@ class PartNetMobilityV0:
         return len(self.index_list)
 
     def _get_sample(self, id_):
-        local_sample_path = self.root_path / "unpacked" / id_
-        if local_sample_path.exists():
+        local_sample_path = os.path.join(self.root_path, "unpacked", id_)
+        if os.path.exists(local_sample_path):
             return local_sample_path
-        local_tarfile_path = (self.root_path / "tarfiles" / id_).with_suffix(".tar.zst")
+        local_tarfile_path = os.path.join(self.root_path, "tarfiles", id_ + ".tar.zst")
         extract_compressed_tarfile(local_tarfile_path, local_sample_path)
         return local_sample_path
 
